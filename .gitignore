@@ -1,0 +1,21 @@
+# API keys — never commit this
+.env
+
+# Python virtual environment
+venv/
+
+# Personal music files
+All Songs/
+all downloaded music/
+Mew2tew/
+*.mp3
+
+# Runtime state
+logs/
+download_archive.txt
+genius_retry_queue.json
+*.m3u
+*.csv
+
+# macOS
+.DS_Store
