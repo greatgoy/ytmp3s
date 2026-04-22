@@ -119,8 +119,19 @@ def _genius_search(artist, title):
         return None
 
 
+def _is_instrumental(mp3_path):
+    """Return True if the file is tagged as instrumental."""
+    try:
+        from mutagen.id3 import ID3 as _MutID3
+        return bool(_MutID3(mp3_path).get("TXXX:Instrumental"))
+    except Exception:
+        return False
+
+
 def _embed_genius_metadata(mp3_path, song_id, headers):
-    """Fetch /songs/{id} from Genius and embed year, track#, writers, producers."""
+    """Fetch /songs/{id} from Genius and embed year, track#, writers, producers.
+    Also sets TXXX:Instrumental if Genius marks the song as instrumental.
+    Returns True if the song is instrumental (so caller can skip lyrics scraping)."""
     try:
         resp = requests.get(
             f"https://api.genius.com/songs/{song_id}",
@@ -129,10 +140,10 @@ def _embed_genius_metadata(mp3_path, song_id, headers):
             timeout=10,
         )
         if resp.status_code != 200:
-            return
+            return False
         song = resp.json().get("response", {}).get("song", {})
         if not song:
-            return
+            return False
         from mutagen.mp3 import MP3 as _MP3
         from mutagen.id3 import (ID3 as _ID3, TYER as _TYER, TCOM as _TCOM,
                                   TRCK as _TRCK, TXXX as _TXXX, error as _ID3Err)
@@ -143,6 +154,10 @@ def _embed_genius_metadata(mp3_path, song_id, headers):
             pass
         tags = mp3.tags
         changed = []
+        is_instrumental = bool(song.get("instrumental"))
+        if is_instrumental and "TXXX:Instrumental" not in tags:
+            tags.add(_TXXX(encoding=3, desc="Instrumental", text=["yes"]))
+            changed.append("instrumental=yes")
         rel = song.get("release_date_components") or {}
         year = rel.get("year")
         if year and "TYER" not in tags and "TDRC" not in tags:
@@ -162,9 +177,12 @@ def _embed_genius_metadata(mp3_path, song_id, headers):
             changed.append("producers")
         if changed:
             mp3.save()
-            print(f"  📋 Metadata: {', '.join(changed)}")
+            label = "🎸 Instrumental + metadata" if is_instrumental else "📋 Metadata"
+            print(f"  {label}: {', '.join(changed)}")
+        return is_instrumental
     except Exception as e:
         print(f"  ⚠️  Metadata embed error: {e}")
+    return False
 
 def strip_remaster_tags(text):
     return re.sub(r"\(([^)]*(remaster|radio edit)[^)]*)\)", "", text, flags=re.IGNORECASE).strip()
@@ -301,7 +319,8 @@ def fetch_lyrics_from_genius(artist, title, mp3_path=None):
         return None
     song_id, url, headers = found
     if mp3_path:
-        _embed_genius_metadata(mp3_path, song_id, headers)
+        if _embed_genius_metadata(mp3_path, song_id, headers):
+            return "INSTRUMENTAL"
     print(f"🎭 Trying Genius: {url}")
     return _scrape_genius_page(url)
 
@@ -548,6 +567,15 @@ def process_file(file_path):
         log_missing(file_path)
         return
 
+    # If already tagged as instrumental, still run metadata enrichment but skip lyrics
+    if _is_instrumental(file_path):
+        print(f"{os.path.basename(file_path)}: 🎸 Instrumental — skipping lyrics, checking metadata")
+        found = _genius_search(artist, title)
+        if found:
+            song_id, url, headers = found
+            _embed_genius_metadata(file_path, song_id, headers)
+        return
+
     # Only split on / outside of parentheses (avoid breaking "Title (A / B)" style tags)
     title_outer = re.sub(r'\([^)]*\)', '', title)
     sub_titles = [t.strip() for t in title.split("/")] if "/" in title_outer else [title]
@@ -555,6 +583,9 @@ def process_file(file_path):
 
     for i, sub_title in enumerate(sub_titles):
         lyrics = fetch_lyrics_from_genius(artist, sub_title, mp3_path=file_path if i == 0 else None)
+        if lyrics == "INSTRUMENTAL":
+            print(f"{os.path.basename(file_path)}: 🎸 Instrumental (Genius confirmed) — no lyrics needed")
+            return
         if not lyrics:
             if _genius_rate_limited:
                 save_to_retry_queue(artist, sub_title, file_path)

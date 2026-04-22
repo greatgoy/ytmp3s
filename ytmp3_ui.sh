@@ -35,9 +35,11 @@ for script in \
     "$SCRIPTS_DIR/lyrics/add_lyric_override.py" \
     "$SCRIPTS_DIR/lyrics/embed_lyrics_manual.py" \
     "$SCRIPTS_DIR/art/add_art_override.py" \
-    "$SCRIPTS_DIR/lyrics/remove_lyrics.py" \
     "$SCRIPTS_DIR/metadata/cleanrepair_script.py" \
-    "$SCRIPTS_DIR/sync/test_sync_restore.py"
+    "$SCRIPTS_DIR/sync/test_sync_restore.py" \
+    "$SCRIPTS_DIR/metadata/show_missing_metadata.py" \
+    "$SCRIPTS_DIR/library/strip_tags.py" \
+    "$SCRIPTS_DIR/lyrics/mark_instrumental.py"
 do
     if [[ ! -f "$script" ]]; then
         echo -e "${RED}Error: Missing script: $script${NC}"
@@ -53,7 +55,7 @@ import os
 from mutagen.id3 import ID3
 
 all_dir = os.path.expanduser("$ALL_SONGS_DIR")
-total, missing_lyrics, missing_art = 0, 0, 0
+total, missing_lyrics, missing_art, instrumental = 0, 0, 0, 0
 
 for f in os.listdir(all_dir):
     if not f.endswith(".mp3"): continue
@@ -61,7 +63,10 @@ for f in os.listdir(all_dir):
     path = os.path.join(all_dir, f)
     try:
         tags = ID3(path)
-        if not any(t.FrameID == "USLT" for t in tags.values()):
+        is_instr = bool(tags.get("TXXX:Instrumental"))
+        if is_instr:
+            instrumental += 1
+        elif not any(t.FrameID == "USLT" for t in tags.values()):
             missing_lyrics += 1
         if not any(t.FrameID == "APIC" for t in tags.values()):
             missing_art += 1
@@ -69,13 +74,16 @@ for f in os.listdir(all_dir):
         missing_lyrics += 1
         missing_art += 1
 
-print(f"{total},{missing_lyrics},{missing_art}")
+print(f"{total},{missing_lyrics},{missing_art},{instrumental}")
 EOF
 )
-    IFS=',' read -r total_files missing_lyrics missing_art <<< "$stats"
+    IFS=',' read -r total_files missing_lyrics missing_art instrumental_songs <<< "$stats"
     echo -e "${CYAN}Total MP3s: ${total_files}${NC}"
     echo -e "${CYAN}Missing Lyrics: ${missing_lyrics}${NC}"
     echo -e "${CYAN}Missing Album Art: ${missing_art}${NC}"
+    if [[ "$instrumental_songs" -gt 0 ]]; then
+        echo -e "${CYAN}Instrumental (no lyrics needed): ${instrumental_songs}${NC}"
+    fi
 
     # Show Genius retry queue size if non-empty
     queue_file="$BASE_DIR/genius_retry_queue.json"
@@ -104,15 +112,16 @@ show_menu() {
     echo -e "${GREEN}─────────────────────────────────────────────────────${NC}"
     echo -e "${GREEN}f)${NC} Show songs missing lyrics      ${CYAN}(show after running '6' or '8')${NC}"
     echo -e "${GREEN}g)${NC} Show songs missing album art   ${CYAN}(show after running '6' or '9')${NC}"
-    echo -e "${GREEN}p)${NC} Show songs missing metadata    ${CYAN}(year, writers, track #, producers)${NC}"
+    echo -e "${GREEN}p)${NC} Show songs missing metadata    ${CYAN}(tiered: core / credits / relationships)${NC}"
     echo -e "${GREEN}─────────────────────────────────────────────────────${NC}"
     echo -e "${GREEN}a)${NC} Add lyric override             ${CYAN}(saves to lyrics_overrides.json; rerun '8' in menu after)${NC}"
     echo -e "${GREEN}m)${NC} Manually embed lyrics          ${CYAN}(paste lyrics directly into a specific song)${NC}"
+    echo -e "${GREEN}j)${NC} Mark / unmark instrumental     ${CYAN}(skips lyrics search; keeps metadata enrichment)${NC}"
     echo -e "${GREEN}i)${NC} Add album art override         ${CYAN}(saves to art_overrides.json; rerun '9' in menu after)${NC}"
     echo -e "${GREEN}r)${NC} Retry lyrics with Genius       ${CYAN}(for rate-limited songs)${NC}"
     echo -e "${GREEN}n)${NC} Enrich metadata from Genius      ${CYAN}(release date, track #, writers, producers, engineers, samples, tags...)${NC}"
     echo -e "${GREEN}─────────────────────────────────────────────────────${NC}"
-    echo -e "${GREEN}b)${NC} Remove lyrics from All Songs"
+    echo -e "${GREEN}b)${NC} Strip embedded data            ${CYAN}(lyrics / art / metadata — interactive)${NC}"
     echo -e "${GREEN}c)${NC} Clean + repair specific songs  ${CYAN}(keyword match on filenames)${NC}"
     echo -e "${GREEN}d)${NC} Test sync/restore              ${CYAN}(interactive, single file)${NC}"
     echo -e "${CYAN}h) Help${NC}"
@@ -130,15 +139,16 @@ show_help() {
     echo -e "7: Cleans up messy MP3 filenames."
     echo -e "8: Embeds missing lyrics — tries Genius, then songlyrics.com, then lyrics.ovh."
     echo -e "9: Embeds album art from iTunes (or override URLs)."
-    echo -e "f: Lists every song currently missing embedded lyrics."
+    echo -e "f: Lists every song currently missing lyrics. Instrumentals are shown separately (they're intentionally skipped)."
     echo -e "g: Lists every song currently missing embedded album art."
-    echo -e "p: Lists every song missing key metadata fields (year, writers, track #, producers)."
+    echo -e "p: Shows songs missing metadata by tier — Core (year/track#/genre), Credits (writers/producers), or Relationships (samples/covers/remixes). Includes hints on what's realistically available."
     echo -e "a: Add a lyric source override (saves to lyrics_overrides.json)."
     echo -e "m: Manually paste lyrics into a specific song. Browse or search by filename, paste lyrics, confirm to embed."
+    echo -e "j: Mark or unmark a song as instrumental. Marked songs skip lyrics search but still get metadata enriched. Genius auto-marks instrumentals during option 8."
     echo -e "i: Add an album art override URL (saves to art_overrides.json)."
-    echo -e "n: Enrich metadata from Genius API — embeds release year, track #, writers, producers, engineers, samples, covers, remixes, and tags. Skips fields already filled. Add --overwrite to replace existing values."
+    echo -e "n: Enrich metadata from Genius API — embeds release year, track #, writers, producers, engineers, samples, covers, remixes, and tags. Falls back to MusicBrainz then iTunes. Skips fields already filled."
     echo -e "r: Retry Genius API for songs that hit the rate limit during a previous run."
-    echo -e "b: Strips all embedded lyrics from every MP3 in All Songs."
+    echo -e "b: Strip embedded data interactively — choose lyrics, art, metadata tiers, or everything. Apply to all songs or a specific song."
     echo -e "c: Manually clean + repair metadata for specific songs by filename keyword."
     echo -e "d: Interactive test to backup/clear/restore tags on a single file."
     echo -e "e: Exit."
@@ -195,11 +205,14 @@ import os
 from mutagen.id3 import ID3
 folder = os.path.expanduser("$ALL_SONGS_DIR")
 missing = []
+instrumental = []
 for f in sorted(os.listdir(folder)):
     if not f.endswith(".mp3"): continue
     try:
         tags = ID3(os.path.join(folder, f))
-        if not any(t.FrameID == "USLT" for t in tags.values()):
+        if tags.get("TXXX:Instrumental"):
+            instrumental.append(f)
+        elif not any(t.FrameID == "USLT" for t in tags.values()):
             missing.append(f)
     except:
         missing.append(f)
@@ -208,6 +221,9 @@ if missing:
     for s in missing: print(f"  • {s}")
 else:
     print("✅ All songs have lyrics!")
+if instrumental:
+    print(f"\n🎸 {len(instrumental)} instrumental song(s) excluded from above:")
+    for s in instrumental: print(f"  • {s}")
 EOF
             ;;
         g|G)
@@ -232,44 +248,14 @@ else:
     print("✅ All songs have album art!")
 EOF
             ;;
-        p|P)
-            echo ""
-            $PYTHON_ENV - <<EOF
-import os
-from mutagen.id3 import ID3
-folder = os.path.expanduser("$ALL_SONGS_DIR")
-results = []
-for f in sorted(os.listdir(folder)):
-    if not f.endswith(".mp3"): continue
-    missing = []
-    try:
-        tags = ID3(os.path.join(folder, f))
-        if not tags.get("TYER") and not tags.get("TDRC"):
-            missing.append("year")
-        if not tags.get("TCOM"):
-            missing.append("writers")
-        if not tags.get("TRCK"):
-            missing.append("track#")
-        if not tags.get("TXXX:Producers"):
-            missing.append("producers")
-    except:
-        missing = ["year", "writers", "track#", "producers"]
-    if missing:
-        results.append((f, missing))
-if results:
-    print(f"❌ {len(results)} song(s) with incomplete metadata:")
-    for name, fields in results:
-        print(f"  • {name}  [{', '.join(fields)}]")
-else:
-    print("✅ All songs have complete metadata!")
-EOF
-            ;;
+        p|P) $PYTHON_ENV "$SCRIPTS_DIR/metadata/show_missing_metadata.py" "$ALL_SONGS_DIR" ;;
         a|A) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/add_lyric_override.py" ;;
         m|M) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/embed_lyrics_manual.py" ;;
+        j|J) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/mark_instrumental.py" ;;
         i|I) $PYTHON_ENV "$SCRIPTS_DIR/art/add_art_override.py" ;;
         r|R) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/fetch_lyrics.py" --retry-genius ;;
         n|N) $PYTHON_ENV "$SCRIPTS_DIR/metadata/enrich_metadata.py" "$ALL_SONGS_DIR" ;;
-        b|B) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/remove_lyrics.py" "$ALL_SONGS_DIR" ;;
+        b|B) $PYTHON_ENV "$SCRIPTS_DIR/library/strip_tags.py" ;;
         c|C) $PYTHON_ENV "$SCRIPTS_DIR/metadata/cleanrepair_script.py" "$ALL_SONGS_DIR" ;;
         d|D) $PYTHON_ENV "$SCRIPTS_DIR/sync/test_sync_restore.py" ;;
         h|H) show_help ;;
