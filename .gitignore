@@ -12,6 +12,7 @@ Mew2tew/
 
 # Runtime state
 logs/
+playlists/
 download_archive.txt
 genius_retry_queue.json
 *.m3u

@@ -39,7 +39,8 @@ for script in \
     "$SCRIPTS_DIR/sync/test_sync_restore.py" \
     "$SCRIPTS_DIR/metadata/show_missing_metadata.py" \
     "$SCRIPTS_DIR/library/strip_tags.py" \
-    "$SCRIPTS_DIR/lyrics/mark_instrumental.py"
+    "$SCRIPTS_DIR/lyrics/mark_instrumental.py" \
+    "$SCRIPTS_DIR/library/move_to_playlist.py"
 do
     if [[ ! -f "$script" ]]; then
         echo -e "${RED}Error: Missing script: $script${NC}"
@@ -98,7 +99,7 @@ EOF
 
 # Menu
 show_menu() {
-    echo -e "${CYAN}  💡 New songs? → ${GREEN}1${CYAN} download → ${GREEN}6${CYAN} pipeline   |   Check gaps: ${GREEN}f · g · p${NC}"
+    echo -e "${CYAN}  💡 New songs? → ${GREEN}1${CYAN} download → ${GREEN}6${CYAN} pipeline → ${GREEN}s${CYAN} move to folder   |   Check gaps: ${GREEN}f · g · p${NC}"
     echo ""
     echo -e "${YELLOW}── CHECK STATUS ───────────────────────────────────────────${NC}"
     echo -e "  ${GREEN}f)${NC} Songs missing lyrics"
@@ -109,6 +110,7 @@ show_menu() {
     echo -e "${YELLOW}── BULK OPERATIONS ────────────────────────────────────────${NC}"
     echo -e "  ${GREEN}1)${NC} Download playlist               ${CYAN}(with dry-run confirmation)${NC}"
     echo -e "  ${GREEN}6)${NC} Run full pipeline               ${CYAN}(filenames → lyrics → art → metadata)${NC}"
+    echo -e "  ${GREEN}s)${NC} Move songs to playlist folder   ${CYAN}(after pipeline is complete)${NC}"
     echo ""
     echo -e "${YELLOW}── FIX SPECIFIC THINGS ────────────────────────────────────${NC}"
     echo -e "  ${GREEN}7)${NC} Clean filenames"
@@ -138,7 +140,7 @@ show_menu() {
 show_help() {
     echo -e "${BLUE}── TYPICAL WORKFLOWS ──────────────────────────────────────${NC}"
     echo -e "  New songs from YouTube:"
-    echo -e "    ${GREEN}1${NC} → download  →  ${GREEN}6${NC} → full pipeline  →  check ${GREEN}f · g · p${NC}"
+    echo -e "    ${GREEN}1${NC} → download  →  ${GREEN}6${NC} → full pipeline  →  check ${GREEN}f · g · p${NC}  →  ${GREEN}s${NC} → move to folder"
     echo ""
     echo -e "  Already have MP3s (need lyrics / art / metadata):"
     echo -e "    ${GREEN}6${NC} → full pipeline  →  check ${GREEN}f · g · p${NC}"
@@ -152,7 +154,9 @@ show_help() {
     echo -e "    ${GREEN}j${NC} → mark instrumental  (excluded from ${GREEN}f${NC}, still enriched by ${GREEN}6${NC} / ${GREEN}n${NC})"
     echo ""
     echo -e "${BLUE}── OPTION DETAILS ─────────────────────────────────────────${NC}"
-    echo -e "  ${GREEN}1${NC}  Download a playlist. Prompts for dry-run or real run."
+    echo -e "  ${GREEN}1${NC}  Download a playlist. Dry-run shows what would download without touching files."
+    echo -e "  ${GREEN}s${NC}  Move songs from All Songs into their playlist folder. Shows pending playlists"
+    echo -e "      tracked since the last download. Run after option 6."
     echo -e "  ${GREEN}2${NC}  Full metadata audit — writes timestamped log to logs/."
     echo -e "  ${GREEN}3${NC}  Remove duplicate MP3s. Logs deleted files."
     echo -e "  ${GREEN}4${NC}  Build an M3U playlist with full file paths."
@@ -258,6 +262,7 @@ while true; do
             REDO_FLAG=""; [[ "$redo_art" == "y" ]] && REDO_FLAG="--redo"
             $PYTHON_ENV "$SCRIPTS_DIR/art/fetch_album_art.py" "$TARGET_FOLDER" $REDO_FLAG
             ;;
+        s|S) $PYTHON_ENV "$SCRIPTS_DIR/library/move_to_playlist.py" ;;
         f|F)
             echo ""
             $PYTHON_ENV - <<EOF
