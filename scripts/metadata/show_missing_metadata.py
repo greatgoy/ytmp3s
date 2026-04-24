@@ -8,6 +8,8 @@ BASE_DIR = os.path.expanduser("~/Downloads/YTmp3s")
 ALL_SONGS_DIR = os.path.join(BASE_DIR, "All Songs")
 
 # Each tier: field_label → (frame_keys_to_check, skip_for_instrumentals)
+# "require_any": song passes the tier if at least one of these field names is present.
+#   Other fields in the tier are still shown as missing but don't count against completion.
 TIERS = {
     "core": {
         "label": "Core  (year, track #, genre)",
@@ -19,6 +21,7 @@ TIERS = {
     },
     "credits": {
         "label": "Credits  (writers, producers, featured, label)",
+        "require_any": ["writers", "producers"],
         "fields": {
             "writers":   (["TCOM"],                   True),   # skip for instrumentals
             "producers": (["TXXX:Producers"],         False),
@@ -53,11 +56,30 @@ def check_songs(folder, tier_keys):
             tags = ID3(path)
             is_instrumental = bool(tags.get("TXXX:Instrumental"))
             for tk in tier_keys:
-                for field_label, (frame_keys, skip_instr) in TIERS[tk]["fields"].items():
-                    if skip_instr and is_instrumental:
-                        continue
-                    if not _any_present(tags, frame_keys):
-                        missing.append(field_label)
+                tier = TIERS[tk]
+                require_any = tier.get("require_any", [])
+
+                if require_any:
+                    # Applicable = require_any fields that aren't skipped for this song
+                    applicable = [
+                        fn for fn in require_any
+                        if not (tier["fields"][fn][1] and is_instrumental)
+                    ]
+                    satisfied = not applicable or any(
+                        _any_present(tags, tier["fields"][fn][0]) for fn in applicable
+                    )
+                    if not satisfied:
+                        for field_label, (frame_keys, skip_instr) in tier["fields"].items():
+                            if skip_instr and is_instrumental:
+                                continue
+                            if not _any_present(tags, frame_keys):
+                                missing.append(field_label)
+                else:
+                    for field_label, (frame_keys, skip_instr) in tier["fields"].items():
+                        if skip_instr and is_instrumental:
+                            continue
+                        if not _any_present(tags, frame_keys):
+                            missing.append(field_label)
         except Exception:
             missing = [fl for tk in tier_keys for fl in TIERS[tk]["fields"]]
         if missing:
@@ -113,8 +135,9 @@ def main():
         print("\n  💡 Core fields come from Genius, MusicBrainz, and iTunes.")
         print("     Run option n to retry enrichment for songs still missing these.")
     elif "credits" in tier_keys:
-        print("\n  💡 Credits (writers/producers) require Genius. Songs not on Genius")
-        print("     may legitimately have no credits data available.")
+        print("\n  💡 A song passes Credits if it has writers OR producers.")
+        print("     Featured artists and label are shown when missing but don't count against you.")
+        print("     Run option n to pull writer credits from Genius + MusicBrainz.")
     if "relationships" in tier_keys:
         print("\n  💡 Relationships (samples/covers/remixes) are Genius-only and only")
         print("     exist when Genius editors have documented them — not always available.")
