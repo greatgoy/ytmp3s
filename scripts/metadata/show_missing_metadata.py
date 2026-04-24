@@ -30,12 +30,16 @@ TIERS = {
         },
     },
     "relationships": {
-        "label": "Relationships  (samples, covers, remixes)",
+        "label": "Relationships  (samples, covers, remixes, live versions)",
+        "require_any": ["samples", "covers", "remixes", "interpols.", "live", "translations", "alternate"],
         "fields": {
-            "samples":    (["TXXX:Samples", "TXXX:Sampled By"],       False),
-            "covers":     (["TXXX:Cover Of", "TXXX:Covered By"],      False),
-            "remixes":    (["TXXX:Remix Of", "TXXX:Remixed By"],      False),
-            "interpols.": (["TXXX:Interpolates", "TXXX:Interpolated By"], False),
+            "samples":      (["TXXX:Samples", "TXXX:Sampled By"],                       False),
+            "covers":       (["TXXX:Cover Of", "TXXX:Covered By"],                      False),
+            "remixes":      (["TXXX:Remix Of", "TXXX:Remixed By"],                      False),
+            "interpols.":   (["TXXX:Interpolates", "TXXX:Interpolated By"],             False),
+            "live":         (["TXXX:Live Version Of", "TXXX:Has Live Version"],         False),
+            "translations": (["TXXX:Translation Of"],                                   False),
+            "alternate":    (["TXXX:Alternate Version Of", "TXXX:Original Version Of"], False),
         },
     },
 }
@@ -87,6 +91,15 @@ def check_songs(folder, tier_keys):
     return results
 
 
+def _song_rel_fields(tags):
+    """Return list of relationship field labels present in this song's tags."""
+    found = []
+    for field_label, (frame_keys, _) in TIERS["relationships"]["fields"].items():
+        if _any_present(tags, frame_keys):
+            found.append(field_label)
+    return found
+
+
 def main():
     folder = ALL_SONGS_DIR
     if len(sys.argv) > 1:
@@ -115,9 +128,35 @@ def main():
 
     tier_keys = tier_map[choice]
     results = check_songs(folder, tier_keys)
+    results_set = {name for name, _ in results}
 
     tier_labels = " + ".join(TIERS[k]["label"].split("(")[0].strip() for k in tier_keys)
     print(f"\n── {tier_labels} ──")
+
+    # Tier 3 alone: flip to positive framing — show songs that HAVE relationship data
+    if tier_keys == ["relationships"]:
+        have_rels = len(all_mp3s) - len(results)
+        print(f"ℹ️  {have_rels}/{len(all_mp3s)} songs have documented relationship data\n")
+        if have_rels == 0:
+            print("   No relationships documented yet.")
+            print("   Run option n to fetch what Genius has for samples, covers, remixes,")
+            print("   live versions, and translations.")
+        else:
+            for f in sorted(os.listdir(folder)):
+                if not f.endswith(".mp3") or f in results_set:
+                    continue
+                path = os.path.join(folder, f)
+                try:
+                    tags = ID3(path)
+                    found = _song_rel_fields(tags)
+                    if found:
+                        print(f"  ✅ {f}")
+                        print(f"     {', '.join(found)}")
+                except Exception:
+                    pass
+        print(f"\n  💡 Most songs won't have relationship data — that's normal.")
+        print(f"     Samples/covers/remixes only exist when Genius editors document them.")
+        return
 
     if not results:
         print("✅ All songs have complete metadata for the selected tier(s)!")
@@ -138,7 +177,7 @@ def main():
         print("\n  💡 A song passes Credits if it has writers OR producers.")
         print("     Featured artists and label are shown when missing but don't count against you.")
         print("     Run option n to pull writer credits from Genius + MusicBrainz.")
-    if "relationships" in tier_keys:
+    if "relationships" in tier_keys and tier_keys != ["relationships"]:
         print("\n  💡 Relationships (samples/covers/remixes) are Genius-only and only")
         print("     exist when Genius editors have documented them — not always available.")
 

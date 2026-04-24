@@ -164,14 +164,19 @@ def embed_enriched_metadata(mp3_path, song, overwrite=False):
                   label=f"Tags: {', '.join(tag_names)}")
 
     rel_map = {
-        "samples":         "Samples",
-        "sampled_in":      "Sampled By",
-        "interpolates":    "Interpolates",
-        "interpolated_by": "Interpolated By",
-        "cover_of":        "Cover Of",
-        "covered_by":      "Covered By",
-        "remix_of":        "Remix Of",
-        "remixed_by":      "Remixed By",
+        "samples":              "Samples",
+        "sampled_in":           "Sampled By",
+        "interpolates":         "Interpolates",
+        "interpolated_by":      "Interpolated By",
+        "cover_of":             "Cover Of",
+        "covered_by":           "Covered By",
+        "remix_of":             "Remix Of",
+        "remixed_by":           "Remixed By",
+        "live_version_of":      "Live Version Of",
+        "has_live_version":     "Has Live Version",
+        "translation_of":       "Translation Of",
+        "alternate_version_of": "Alternate Version Of",
+        "original_version_of":  "Original Version Of",
     }
     for rel_type, rel_label in rel_map.items():
         related = []
@@ -215,7 +220,7 @@ def fetch_musicbrainz_details(mbid):
     try:
         resp = requests.get(
             f"https://musicbrainz.org/ws/2/recording/{mbid}",
-            params={"inc": "artist-rels+releases", "fmt": "json"},
+            params={"inc": "artist-rels+releases+work-rels", "fmt": "json"},
             headers=_MB_HEADERS,
             timeout=10,
         )
@@ -224,6 +229,22 @@ def fetch_musicbrainz_details(mbid):
             return resp.json()
     except Exception as e:
         print(f"⚠️  MusicBrainz fetch error: {e}")
+    return None
+
+
+def fetch_musicbrainz_work(work_id):
+    try:
+        resp = requests.get(
+            f"https://musicbrainz.org/ws/2/work/{work_id}",
+            params={"inc": "artist-rels", "fmt": "json"},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        time.sleep(1)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        print(f"⚠️  MusicBrainz work fetch error: {e}")
     return None
 
 
@@ -250,9 +271,11 @@ def embed_musicbrainz_metadata(mp3_path, data, overwrite=False):
                 changed.append(f"Year: {year}")
             break
 
-    # Artist relations: writers, composers, producers
+    # Recording-level artist relations: producers (and sometimes writers)
     writers, producers = [], []
     for rel in data.get("relations", []):
+        if rel.get("target-type") != "artist":
+            continue
         aname = rel.get("artist", {}).get("name", "")
         rtype = rel.get("type", "").lower()
         if not aname:
@@ -261,6 +284,25 @@ def embed_musicbrainz_metadata(mp3_path, data, overwrite=False):
             writers.append(aname)
         elif rtype == "producer":
             producers.append(aname)
+
+    # Work-level credits: MusicBrainz works (abstract compositions) carry more complete
+    # composer/lyricist data than recordings. Follow the work-rel link to get them.
+    if not writers:
+        for rel in data.get("relations", []):
+            if rel.get("target-type") == "work":
+                work_id = rel.get("work", {}).get("id")
+                if work_id:
+                    work_data = fetch_musicbrainz_work(work_id)
+                    if work_data:
+                        for wrel in work_data.get("relations", []):
+                            if wrel.get("target-type") != "artist":
+                                continue
+                            wtype = wrel.get("type", "").lower()
+                            aname = wrel.get("artist", {}).get("name", "")
+                            if aname and wtype in ("composer", "lyricist", "writer"):
+                                if aname not in writers:
+                                    writers.append(aname)
+                break  # one work per recording is the norm
 
     if writers and (not _has("TCOM") or overwrite):
         tags.add(TCOM(encoding=3, text=[", ".join(writers)]))
