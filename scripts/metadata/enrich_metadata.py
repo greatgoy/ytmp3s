@@ -99,7 +99,7 @@ def embed_enriched_metadata(mp3_path, song, overwrite=False):
     changed = []
 
     def _has(key):
-        return key in tags
+        return bool(tags.get(key))
 
     def _set_text(frame_cls, text, desc=None, label=None):
         key = f"TXXX:{desc}" if desc else frame_cls.__name__
@@ -113,7 +113,7 @@ def embed_enriched_metadata(mp3_path, song, overwrite=False):
 
     rel = song.get("release_date_components") or {}
     year = rel.get("year")
-    if year and not (_has("TYER") or _has("TDRC")):
+    if year and not (_has("TYER") or _has("TDRC")) or (year and overwrite):
         tags.add(TYER(encoding=3, text=[str(year)]))
         changed.append(f"Year: {year}")
 
@@ -237,7 +237,7 @@ def embed_musicbrainz_metadata(mp3_path, data, overwrite=False):
     changed = []
 
     def _has(key):
-        return key in tags
+        return bool(tags.get(key))
 
     # Year from earliest release
     releases = sorted(data.get("releases", []), key=lambda r: r.get("date", "9999"))
@@ -314,17 +314,17 @@ def embed_itunes_metadata(mp3_path, result, overwrite=False):
     release_date = result.get("releaseDate", "")
     if release_date and len(release_date) >= 4:
         year = release_date[:4]
-        if not ("TYER" in tags or "TDRC" in tags) or overwrite:
+        if not (tags.get("TYER") or tags.get("TDRC")) or overwrite:
             tags.add(TYER(encoding=3, text=[year]))
             changed.append(f"Year: {year}")
 
     track_num = result.get("trackNumber")
-    if track_num and ("TRCK" not in tags or overwrite):
+    if track_num and (not tags.get("TRCK") or overwrite):
         tags.add(TRCK(encoding=3, text=[str(track_num)]))
         changed.append(f"Track #: {track_num}")
 
     genre = result.get("primaryGenreName")
-    if genre and ("TCON" not in tags or overwrite):
+    if genre and (not tags.get("TCON") or overwrite):
         tags.add(TCON(encoding=3, text=[genre]))
         changed.append(f"Genre: {genre}")
 
@@ -334,6 +334,17 @@ def embed_itunes_metadata(mp3_path, result, overwrite=False):
 
 
 # ── Per-file processing ───────────────────────────────────────────────────────
+
+def _core_complete(mp3_path):
+    """Return True if year, track #, and genre are all filled with real values."""
+    try:
+        t = ID3(mp3_path)
+        return (bool(t.get("TYER") or t.get("TDRC")) and
+                bool(t.get("TRCK")) and
+                bool(t.get("TCON")))
+    except Exception:
+        return False
+
 
 def process_file(mp3_path, overwrite=False):
     filename = os.path.basename(mp3_path)
@@ -354,7 +365,8 @@ def process_file(mp3_path, overwrite=False):
 
     print(f"\n🔍 {filename}")
 
-    # Genius (best coverage + richest data)
+    # Step 1: Genius — credits, relationships, labels, engineering (richest data)
+    genius_found = False
     song_id = search_genius(artist, title)
     if song_id:
         song = fetch_song_details(song_id)
@@ -364,36 +376,36 @@ def process_file(mp3_path, overwrite=False):
                 for item in changed:
                     print(f"  ✅ {item}")
             else:
-                print(f"  ℹ️  No new metadata to add (use --overwrite to force)")
-            return  # Genius found the song — stop here regardless
+                print(f"  ℹ️  Genius: no new credits/relationship data")
+            genius_found = True
 
-    # MusicBrainz fallback
-    print(f"  ↩️  Not found on Genius — trying MusicBrainz...")
-    mb_id = search_musicbrainz(artist, title)
-    if mb_id:
-        mb_data = fetch_musicbrainz_details(mb_id)
-        if mb_data:
-            changed = embed_musicbrainz_metadata(mp3_path, mb_data, overwrite=overwrite)
+    # Step 2: iTunes — always run for year/track#/genre if any core field is missing.
+    # Genius frequently lacks release_date_components, so don't rely on it for core fields.
+    if not _core_complete(mp3_path) or overwrite:
+        itunes_result = search_itunes_metadata(artist, title)
+        if itunes_result:
+            changed = embed_itunes_metadata(mp3_path, itunes_result, overwrite=overwrite)
             if changed:
                 for item in changed:
-                    print(f"  ✅ {item} (MusicBrainz)")
-                return
-            else:
-                print(f"  ℹ️  MusicBrainz found song but no new fields to add")
+                    print(f"  ✅ {item} (iTunes)")
 
-    # iTunes fallback
-    print(f"  ↩️  Trying iTunes...")
-    itunes_result = search_itunes_metadata(artist, title)
-    if itunes_result:
-        changed = embed_itunes_metadata(mp3_path, itunes_result, overwrite=overwrite)
-        if changed:
-            for item in changed:
-                print(f"  ✅ {item} (iTunes)")
-            return
-        else:
-            print(f"  ℹ️  iTunes found song but no new fields to add")
+    # Step 3: MusicBrainz — only when Genius didn't find the song at all.
+    # Adds writer credits + release year for obscure/international tracks.
+    if not genius_found:
+        print(f"  ↩️  Not found on Genius — trying MusicBrainz...")
+        mb_id = search_musicbrainz(artist, title)
+        if mb_id:
+            mb_data = fetch_musicbrainz_details(mb_id)
+            if mb_data:
+                changed = embed_musicbrainz_metadata(mp3_path, mb_data, overwrite=overwrite)
+                if changed:
+                    for item in changed:
+                        print(f"  ✅ {item} (MusicBrainz)")
+                else:
+                    print(f"  ℹ️  MusicBrainz found song but no new fields to add")
 
-    print(f"  ❌ Not found on Genius, MusicBrainz, or iTunes")
+        if not _core_complete(mp3_path):
+            print(f"  ❌ Not found on Genius, MusicBrainz, or iTunes")
 
 
 def process_folder(folder, overwrite=False):

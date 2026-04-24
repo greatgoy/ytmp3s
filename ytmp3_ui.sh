@@ -135,10 +135,10 @@ show_help() {
     echo -e "3: Removes duplicate MP3s. Logs deleted files."
     echo -e "4: Builds an M3U playlist with full file paths."
     echo -e "5: Exports a CSV summary of all embedded metadata."
-    echo -e "6: Full post-download pipeline — clean filenames, fetch lyrics (+ Genius metadata), fetch album art, enrich metadata (MusicBrainz/iTunes fallbacks)."
+    echo -e "6: Full post-download pipeline. Prompts for folder (default: All Songs) and optional force mode to re-run everything even if already present."
     echo -e "7: Cleans up messy MP3 filenames."
-    echo -e "8: Embeds missing lyrics — tries Genius, then songlyrics.com, then lyrics.ovh."
-    echo -e "9: Embeds album art from iTunes (or override URLs)."
+    echo -e "8: Fetches missing lyrics. Prompts for folder and optional --force to re-fetch songs that already have lyrics."
+    echo -e "9: Fetches album art. Prompts for folder and optional --redo to replace existing art."
     echo -e "f: Lists every song currently missing lyrics. Instrumentals are shown separately (they're intentionally skipped)."
     echo -e "g: Lists every song currently missing embedded album art."
     echo -e "p: Shows songs missing metadata by tier — Core (year/track#/genre), Credits (writers/producers), or Relationships (samples/covers/remixes). Includes hints on what's realistically available."
@@ -146,13 +146,30 @@ show_help() {
     echo -e "m: Manually paste lyrics into a specific song. Browse or search by filename, paste lyrics, confirm to embed."
     echo -e "j: Mark or unmark a song as instrumental. Marked songs skip lyrics search but still get metadata enriched. Genius auto-marks instrumentals during option 8."
     echo -e "i: Add an album art override URL (saves to art_overrides.json)."
-    echo -e "n: Enrich metadata from Genius API — embeds release year, track #, writers, producers, engineers, samples, covers, remixes, and tags. Falls back to MusicBrainz then iTunes. Skips fields already filled."
+    echo -e "n: Enrich metadata. Prompts for folder and optional --overwrite to replace existing fields. Falls back to MusicBrainz then iTunes when Genius doesn't find a song."
     echo -e "r: Retry Genius API for songs that hit the rate limit during a previous run."
     echo -e "b: Strip embedded data interactively — choose lyrics, art, metadata tiers, or everything. Apply to all songs or a specific song."
     echo -e "c: Manually clean + repair metadata for specific songs by filename keyword."
     echo -e "d: Interactive test to backup/clear/restore tags on a single file."
     echo -e "e: Exit."
     echo ""
+}
+
+# Folder picker — sets TARGET_FOLDER, returns 1 on invalid path
+pick_folder() {
+    echo -e "${CYAN}Target folder — press Enter for All Songs, or paste a custom path:${NC}"
+    read -p "  Path [All Songs]: " folder_input
+    if [[ -z "$folder_input" ]]; then
+        TARGET_FOLDER="$ALL_SONGS_DIR"
+    else
+        folder_input="${folder_input/#\~/$HOME}"
+        if [[ ! -d "$folder_input" ]]; then
+            echo -e "${RED}Folder not found: $folder_input${NC}"
+            return 1
+        fi
+        TARGET_FOLDER="$folder_input"
+    fi
+    echo -e "${CYAN}Using: $TARGET_FOLDER${NC}"
 }
 
 # Loop
@@ -184,20 +201,36 @@ while true; do
         4) $PYTHON_ENV "$SCRIPTS_DIR/library/generate_m3u.py" ;;
         5) $PYTHON_ENV "$SCRIPTS_DIR/metadata/metadata_summary.py" ;;
         6)
-            echo -e "${BLUE}Running full pipeline on All Songs...${NC}"
+            pick_folder || continue
+            read -p "Force mode? Re-runs lyrics/art/metadata even if already present (y/n): " force_all
+            FORCE_FLAG=""; REDO_FLAG=""; OVERWRITE_FLAG=""
+            if [[ "$force_all" == "y" ]]; then
+                FORCE_FLAG="--force"; REDO_FLAG="--redo"; OVERWRITE_FLAG="--overwrite"
+            fi
+            echo -e "${BLUE}Running full pipeline on: $TARGET_FOLDER${NC}"
             echo -e "${CYAN}Step 1/4: Cleaning filenames${NC}"
-            $PYTHON_ENV "$SCRIPTS_DIR/metadata/clean_filenames.py"
+            $PYTHON_ENV "$SCRIPTS_DIR/metadata/clean_filenames.py" "$TARGET_FOLDER"
             echo -e "${CYAN}Step 2/4: Fetching lyrics (+ Genius metadata)${NC}"
-            $PYTHON_ENV "$SCRIPTS_DIR/lyrics/fetch_lyrics.py" "$ALL_SONGS_DIR"
+            $PYTHON_ENV "$SCRIPTS_DIR/lyrics/fetch_lyrics.py" "$TARGET_FOLDER" $FORCE_FLAG
             echo -e "${CYAN}Step 3/4: Fetching album art${NC}"
-            $PYTHON_ENV "$SCRIPTS_DIR/art/fetch_album_art.py" "$ALL_SONGS_DIR"
+            $PYTHON_ENV "$SCRIPTS_DIR/art/fetch_album_art.py" "$TARGET_FOLDER" $REDO_FLAG
             echo -e "${CYAN}Step 4/4: Enriching metadata (MusicBrainz/iTunes fallbacks)${NC}"
-            $PYTHON_ENV "$SCRIPTS_DIR/metadata/enrich_metadata.py" "$ALL_SONGS_DIR"
+            $PYTHON_ENV "$SCRIPTS_DIR/metadata/enrich_metadata.py" "$TARGET_FOLDER" $OVERWRITE_FLAG
             echo -e "${GREEN}✅ Pipeline complete.${NC}"
             ;;
         7) $PYTHON_ENV "$SCRIPTS_DIR/metadata/clean_filenames.py" ;;
-        8) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/fetch_lyrics.py" "$ALL_SONGS_DIR" ;;
-        9) $PYTHON_ENV "$SCRIPTS_DIR/art/fetch_album_art.py" "$ALL_SONGS_DIR" ;;
+        8)
+            pick_folder || continue
+            read -p "Force re-fetch lyrics even if already embedded? (y/n): " force_lyrics
+            FORCE_FLAG=""; [[ "$force_lyrics" == "y" ]] && FORCE_FLAG="--force"
+            $PYTHON_ENV "$SCRIPTS_DIR/lyrics/fetch_lyrics.py" "$TARGET_FOLDER" $FORCE_FLAG
+            ;;
+        9)
+            pick_folder || continue
+            read -p "Re-embed art even where already present? (y/n): " redo_art
+            REDO_FLAG=""; [[ "$redo_art" == "y" ]] && REDO_FLAG="--redo"
+            $PYTHON_ENV "$SCRIPTS_DIR/art/fetch_album_art.py" "$TARGET_FOLDER" $REDO_FLAG
+            ;;
         f|F)
             echo ""
             $PYTHON_ENV - <<EOF
@@ -254,7 +287,12 @@ EOF
         j|J) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/mark_instrumental.py" ;;
         i|I) $PYTHON_ENV "$SCRIPTS_DIR/art/add_art_override.py" ;;
         r|R) $PYTHON_ENV "$SCRIPTS_DIR/lyrics/fetch_lyrics.py" --retry-genius ;;
-        n|N) $PYTHON_ENV "$SCRIPTS_DIR/metadata/enrich_metadata.py" "$ALL_SONGS_DIR" ;;
+        n|N)
+            pick_folder || continue
+            read -p "Overwrite existing metadata fields? (y/n): " overwrite_meta
+            OVERWRITE_FLAG=""; [[ "$overwrite_meta" == "y" ]] && OVERWRITE_FLAG="--overwrite"
+            $PYTHON_ENV "$SCRIPTS_DIR/metadata/enrich_metadata.py" "$TARGET_FOLDER" $OVERWRITE_FLAG
+            ;;
         b|B) $PYTHON_ENV "$SCRIPTS_DIR/library/strip_tags.py" ;;
         c|C) $PYTHON_ENV "$SCRIPTS_DIR/metadata/cleanrepair_script.py" "$ALL_SONGS_DIR" ;;
         d|D) $PYTHON_ENV "$SCRIPTS_DIR/sync/test_sync_restore.py" ;;

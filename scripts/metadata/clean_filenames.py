@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import os
 import re
+import sys
 from datetime import datetime
 from mutagen.easyid3 import EasyID3
 
 BASE_DIR = os.path.expanduser("~/Downloads/YTmp3s")
-ALL_SONGS_DIR = os.path.join(BASE_DIR, "All Songs")
+ALL_SONGS_DIR = sys.argv[1] if len(sys.argv) > 1 else os.path.join(BASE_DIR, "All Songs")
 _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_FILE = os.path.join(BASE_DIR, "logs", f"rename_{_ts}.txt")
 

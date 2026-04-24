@@ -31,6 +31,9 @@ _MISSING_LOG = os.path.join(LOGS_DIR, f"missing_lyrics_{_run_ts}.txt")
 # Flips to True the moment Genius returns 429 — resets each new run
 _genius_rate_limited = False
 
+# Set via --force: re-fetch lyrics even if already embedded
+_force_reembed = False
+
 # --- Overrides & retry queue ---
 
 def load_overrides():
@@ -160,19 +163,19 @@ def _embed_genius_metadata(mp3_path, song_id, headers):
             changed.append("instrumental=yes")
         rel = song.get("release_date_components") or {}
         year = rel.get("year")
-        if year and "TYER" not in tags and "TDRC" not in tags:
+        if year and not (tags.get("TYER") or tags.get("TDRC")):
             tags.add(_TYER(encoding=3, text=[str(year)]))
             changed.append(f"year={year}")
         track_num = song.get("track_number")
-        if track_num and "TRCK" not in tags:
+        if track_num and not tags.get("TRCK"):
             tags.add(_TRCK(encoding=3, text=[str(track_num)]))
             changed.append(f"track={track_num}")
         writers = [w["name"] for w in song.get("writer_artists", [])]
-        if writers and "TCOM" not in tags:
+        if writers and not tags.get("TCOM"):
             tags.add(_TCOM(encoding=3, text=[", ".join(writers)]))
             changed.append("writers")
         producers = [p["name"] for p in song.get("producer_artists", [])]
-        if producers and "TXXX:Producers" not in tags:
+        if producers and not tags.get("TXXX:Producers"):
             tags.add(_TXXX(encoding=3, desc="Producers", text=[", ".join(producers)]))
             changed.append("producers")
         if changed:
@@ -556,7 +559,7 @@ def process_file(file_path):
     if audio is None or audio.tag is None:
         print(f"{os.path.basename(file_path)}: ⚠️ No metadata")
         return
-    if has_lyrics(audio):
+    if has_lyrics(audio) and not _force_reembed:
         print(f"{os.path.basename(file_path)}: ✅ Already has lyrics")
         return
 
@@ -616,14 +619,20 @@ def process_folder(folder_path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: fetch_lyrics.py <folder or file path> | --retry-genius")
+        print("Usage: fetch_lyrics.py <folder or file path> [--force] | --retry-genius")
         sys.exit(1)
 
-    if sys.argv[1] == "--retry-genius":
+    if "--force" in sys.argv:
+        _force_reembed = True
+        print("⚡ Force mode — re-fetching lyrics even if already embedded")
+
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+
+    if "--retry-genius" in sys.argv:
         retry_genius_queue()
-    elif os.path.isdir(sys.argv[1]):
-        process_folder(sys.argv[1])
-    elif os.path.isfile(sys.argv[1]):
-        process_file(sys.argv[1])
+    elif args and os.path.isdir(args[0]):
+        process_folder(args[0])
+    elif args and os.path.isfile(args[0]):
+        process_file(args[0])
     else:
-        print(f"{sys.argv[1]} is not a valid file or folder")
+        print(f"Not a valid file or folder: {args[0] if args else '(none)'}")
