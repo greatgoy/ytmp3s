@@ -389,10 +389,15 @@ def process_file(mp3_path, overwrite=False):
                 for item in changed:
                     print(f"  ✅ {item} (iTunes)")
 
-    # Step 3: MusicBrainz — only when Genius didn't find the song at all.
-    # Adds writer credits + release year for obscure/international tracks.
-    if not genius_found:
-        print(f"  ↩️  Not found on Genius — trying MusicBrainz...")
+    # Step 3: MusicBrainz — runs when Genius didn't find the song, OR when Genius found
+    # it but returned no writer/producer credits. MusicBrainz has solid composer data.
+    t = ID3(mp3_path)
+    has_credits = bool(t.get("TCOM")) or bool(t.get("TXXX:Producers"))
+    if not genius_found or not has_credits or overwrite:
+        if not genius_found:
+            print(f"  ↩️  Not found on Genius — trying MusicBrainz...")
+        else:
+            print(f"  ↩️  No credits from Genius — trying MusicBrainz for writers...")
         mb_id = search_musicbrainz(artist, title)
         if mb_id:
             mb_data = fetch_musicbrainz_details(mb_id)
@@ -401,10 +406,10 @@ def process_file(mp3_path, overwrite=False):
                 if changed:
                     for item in changed:
                         print(f"  ✅ {item} (MusicBrainz)")
-                else:
+                elif not genius_found:
                     print(f"  ℹ️  MusicBrainz found song but no new fields to add")
 
-        if not _core_complete(mp3_path):
+        if not genius_found and not _core_complete(mp3_path):
             print(f"  ❌ Not found on Genius, MusicBrainz, or iTunes")
 
 
