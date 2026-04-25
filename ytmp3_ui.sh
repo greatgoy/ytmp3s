@@ -166,8 +166,9 @@ show_help() {
     echo -e "    ${GREEN}j${NC} → mark instrumental  (excluded from ${GREEN}f${NC}, still enriched by ${GREEN}6${NC} / ${GREEN}n${NC})"
     echo ""
     echo -e "${BLUE}── OPTION DETAILS ─────────────────────────────────────────${NC}"
-    echo -e "  ${GREEN}1${NC}  Download a playlist. Dry-run shows what would download without touching files."
-    echo -e "      A failure log is saved automatically if any songs couldn't be fetched."
+    echo -e "  ${GREEN}1${NC}  Download a playlist. Prompts for dry-run (preview only) and whether to run"
+    echo -e "      the full pipeline immediately after. A failure log is saved automatically"
+    echo -e "      if any songs couldn't be fetched — use option t to retry them."
     echo -e "  ${GREEN}t${NC}  Retry failed downloads. Shows songs yt-dlp couldn't fetch, with their URLs."
     echo -e "      Retry all or pick specific ones. Updates the manifest on success."
     echo -e "  ${GREEN}s${NC}  Move songs from All Songs into their playlist folder. Shows pending playlists"
@@ -233,11 +234,26 @@ while true; do
         1)
             read -p "Paste playlist URL: " url
             read -p "Dry run first? (y/n): " dryrun
-            read -p "Skip embedding metadata? (y/n): " skip_meta
-            MODE=""
-            [[ "$dryrun" == "y" ]] && MODE+="--dry-run "
-            [[ "$skip_meta" == "y" ]] && MODE+="--skip-metadata"
-            bash "$YTMP3_SCRIPT" "$url" $MODE
+            if [[ "$dryrun" == "y" ]]; then
+                bash "$YTMP3_SCRIPT" "$url" --dry-run
+            else
+                read -p "Run full pipeline after downloading? (y/n): " run_pipeline
+                bash "$YTMP3_SCRIPT" "$url"
+                if [[ "$run_pipeline" == "y" ]]; then
+                    echo -e "${BLUE}Running full pipeline on All Songs...${NC}"
+                    echo -e "${CYAN}Step 1/4: Cleaning filenames${NC}"
+                    $PYTHON_ENV "$SCRIPTS_DIR/metadata/clean_filenames.py" "$ALL_SONGS_DIR"
+                    echo -e "${CYAN}Step 2/4: Fetching lyrics (+ Genius metadata)${NC}"
+                    $PYTHON_ENV "$SCRIPTS_DIR/lyrics/fetch_lyrics.py" "$ALL_SONGS_DIR"
+                    echo -e "${CYAN}Step 3/4: Fetching album art${NC}"
+                    $PYTHON_ENV "$SCRIPTS_DIR/art/fetch_album_art.py" "$ALL_SONGS_DIR"
+                    echo -e "${CYAN}Step 4/4: Enriching metadata (MusicBrainz/iTunes fallbacks)${NC}"
+                    $PYTHON_ENV "$SCRIPTS_DIR/metadata/enrich_metadata.py" "$ALL_SONGS_DIR"
+                    echo -e "${GREEN}✅ Pipeline complete. Run option t if any songs failed to download.${NC}"
+                else
+                    echo -e "${CYAN}Run option t if any songs failed, then option 6 when ready to process.${NC}"
+                fi
+            fi
             ;;
         2) $PYTHON_ENV "$SCRIPTS_DIR/metadata/audit_metadata.py" ;;
         3)
