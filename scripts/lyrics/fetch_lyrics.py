@@ -41,8 +41,9 @@ def load_overrides():
         with open(OVERRIDES_PATH, encoding='utf-8') as f:
             data = json.load(f)
             data.setdefault("genius_url", {})
+            data.setdefault("azlyrics", {})
             return data
-    return {"songlyrics": {}, "ovh": {}, "genius_url": {}}
+    return {"songlyrics": {}, "ovh": {}, "genius_url": {}, "azlyrics": {}}
 
 def load_retry_queue():
     if os.path.exists(GENIUS_RETRY_QUEUE_PATH):
@@ -439,10 +440,16 @@ def fetch_lyrics_from_lrclib(artist, title):
 # --- Source 5: AZLyrics ---
 
 def fetch_lyrics_from_azlyrics(artist, title):
-    artist_slug = re.sub(r"[^a-z0-9]", "", artist.lower())
-    title_slug  = re.sub(r"[^a-z0-9]", "", strip_remaster_tags(title).lower())
-    url = f"https://www.azlyrics.com/lyrics/{artist_slug}/{title_slug}.html"
-    print(f"📝 Trying AZLyrics: {url}")
+    overrides = load_overrides().get("azlyrics", {})
+    key = normalize_for_key(artist, title)
+    if key in overrides:
+        url = overrides[key]
+        print(f"🎯 Using AZLyrics override: {url}")
+    else:
+        artist_slug = re.sub(r"[^a-z0-9]", "", artist.lower())
+        title_slug  = re.sub(r"[^a-z0-9]", "", strip_remaster_tags(title).lower())
+        url = f"https://www.azlyrics.com/lyrics/{artist_slug}/{title_slug}.html"
+        print(f"📝 Trying AZLyrics: {url}")
     try:
         resp = _genius_page_get(url)  # uses curl_cffi/cloudscraper/requests
         if resp.status_code == 404:

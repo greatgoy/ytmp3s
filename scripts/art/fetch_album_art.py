@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import time
 import threading
 import requests
 import urllib.parse
@@ -25,6 +26,9 @@ LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY", "")
 _MB_HEADERS = {"User-Agent": "ytmp3-art/1.0 ( ytmp3 )"}
 _LASTFM_DEFAULT_IMG = "2a96cbd8b46e442fc41c2b86b821562f.png"
 
+# Limit concurrent iTunes requests — too many threads hitting it simultaneously causes 429s
+_ITUNES_SEMAPHORE = threading.Semaphore(2)
+
 
 def load_art_overrides():
     import json
@@ -43,14 +47,23 @@ def search_itunes(album, artist):
         return None
     query = urllib.parse.quote_plus(f"{normalize_album(album)} {artist}")
     url = f"https://itunes.apple.com/search?term={query}&entity=album&limit=1"
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        results = response.json().get('results')
-        if results:
-            return results[0]['artworkUrl100'].replace('100x100bb.jpg', '600x600bb.jpg')
-    except Exception as e:
-        print(f"   ⚠️  iTunes error: {e}")
+    with _ITUNES_SEMAPHORE:
+        for attempt in range(3):
+            try:
+                response = requests.get(url, timeout=10)
+                if response.status_code == 429:
+                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    print(f"   ⚠️  iTunes rate limited — retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                response.raise_for_status()
+                results = response.json().get('results')
+                if results:
+                    return results[0]['artworkUrl100'].replace('100x100bb.jpg', '600x600bb.jpg')
+                return None
+            except Exception as e:
+                print(f"   ⚠️  iTunes error: {e}")
+                return None
     return None
 
 

@@ -15,8 +15,9 @@ def load():
         with open(OVERRIDES_PATH, encoding='utf-8') as f:
             data = json.load(f)
             data.setdefault("genius_url", {})
+            data.setdefault("azlyrics", {})
             return data
-    return {"songlyrics": {}, "ovh": {}, "genius_url": {}}
+    return {"songlyrics": {}, "ovh": {}, "genius_url": {}, "azlyrics": {}}
 
 
 def save(data):
@@ -72,17 +73,9 @@ def _pick_missing_song():
 
 def main():
     data = load()
-
     print("\n=== Add Lyric Override ===")
-    print("1) songlyrics.com  — I found the right URL on songlyrics.com")
-    print("2) lyrics.ovh      — The artist/title just needs a correction")
-    print("3) Genius URL      — Paste the exact Genius page URL to scrape directly")
-    choice = input("\nChoose 1, 2, or 3 (or Enter to cancel): ").strip()
 
-    if choice not in ("1", "2", "3"):
-        print("Cancelled.")
-        return
-
+    # Step 1: pick which song needs fixing
     song = _pick_missing_song()
     if not song:
         print("Cancelled.")
@@ -93,6 +86,14 @@ def main():
     if artist or title:
         print(f"   Artist: {artist}")
         print(f"   Title:  {title}")
+
+    # Step 2: pick the override source
+    print()
+    print("  1) songlyrics.com  — I found the right URL on songlyrics.com")
+    print("  2) lyrics.ovh      — The artist/title just needs a spelling correction")
+    print("  3) AZLyrics URL    — Paste the AZLyrics page URL directly")
+    print("  4) Genius page URL — Scrapes the Genius page (needs curl_cffi; may be blocked)")
+    choice = input("\nChoose 1–4 (or Enter to cancel): ").strip()
 
     if choice == "1":
         url = input("\nPaste songlyrics.com URL: ").strip()
@@ -120,6 +121,23 @@ def main():
         print(f"   Key: '{key}' → ({artist_correct}, {title_correct})")
 
     elif choice == "3":
+        url = input("\nPaste AZLyrics page URL (e.g. https://www.azlyrics.com/lyrics/...): ").strip()
+        if not url:
+            print("Cancelled — nothing saved.")
+            return
+        key = normalize_key(artist, title)
+        data["azlyrics"][key] = url
+        save(data)
+        print(f"✅ Saved AZLyrics override")
+        print(f"   Key: '{key}'")
+        print(f"   URL: {url}")
+        print(f"   Re-run option 8 to fetch and embed the lyrics.")
+
+    elif choice == "4":
+        print()
+        print("  Note: this scrapes the Genius page HTML for lyrics.")
+        print("  It does NOT use the Genius API — it requires curl_cffi to bypass")
+        print("  Cloudflare, and may still get blocked. If it fails, try AZLyrics instead.")
         url = input("\nPaste Genius page URL (e.g. https://genius.com/...): ").strip()
         if not url:
             print("Cancelled — nothing saved.")
@@ -131,6 +149,9 @@ def main():
         print(f"   Key: '{key}'")
         print(f"   URL: {url}")
         print(f"   Re-run option 8 to fetch and embed the lyrics.")
+
+    else:
+        print("Cancelled.")
 
 
 if __name__ == "__main__":
