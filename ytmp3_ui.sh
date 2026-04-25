@@ -40,7 +40,10 @@ for script in \
     "$SCRIPTS_DIR/metadata/show_missing_metadata.py" \
     "$SCRIPTS_DIR/library/strip_tags.py" \
     "$SCRIPTS_DIR/lyrics/mark_instrumental.py" \
-    "$SCRIPTS_DIR/library/move_to_playlist.py"
+    "$SCRIPTS_DIR/library/move_to_playlist.py" \
+    "$SCRIPTS_DIR/library/retry_failed.py" \
+    "$SCRIPTS_DIR/library/manage_archive.py" \
+    "$SCRIPTS_DIR/library/batch_process.py"
 do
     if [[ ! -f "$script" ]]; then
         echo -e "${RED}Error: Missing script: $script${NC}"
@@ -99,7 +102,7 @@ EOF
 
 # Menu
 show_menu() {
-    echo -e "${CYAN}  💡 New songs? → ${GREEN}1${CYAN} download → ${GREEN}6${CYAN} pipeline → ${GREEN}s${CYAN} move to folder   |   Check gaps: ${GREEN}f · g · p${NC}"
+    echo -e "${CYAN}  💡 New songs? → ${GREEN}1${CYAN} → ${GREEN}6${CYAN} → ${GREEN}s${CYAN}   Re-process existing? → ${GREEN}w${CYAN}   Archive? → ${GREEN}v${CYAN}   Check gaps: ${GREEN}f · g · p${NC}"
     echo ""
     echo -e "${YELLOW}── CHECK STATUS ───────────────────────────────────────────${NC}"
     echo -e "  ${GREEN}f)${NC} Songs missing lyrics"
@@ -109,8 +112,11 @@ show_menu() {
     echo ""
     echo -e "${YELLOW}── BULK OPERATIONS ────────────────────────────────────────${NC}"
     echo -e "  ${GREEN}1)${NC} Download playlist               ${CYAN}(with dry-run confirmation)${NC}"
+    echo -e "  ${GREEN}t)${NC} Retry failed downloads          ${CYAN}(songs yt-dlp couldn't fetch last time)${NC}"
     echo -e "  ${GREEN}6)${NC} Run full pipeline               ${CYAN}(filenames → lyrics → art → metadata)${NC}"
     echo -e "  ${GREEN}s)${NC} Move songs to playlist folder   ${CYAN}(after pipeline is complete)${NC}"
+    echo -e "  ${GREEN}w)${NC} Batch process existing folders  ${CYAN}(pipeline on pre-claude / archive folders)${NC}"
+    echo -e "  ${GREEN}v)${NC} Manage download archive         ${CYAN}(view, archive pre-claude entries, or clear)${NC}"
     echo ""
     echo -e "${YELLOW}── FIX SPECIFIC THINGS ────────────────────────────────────${NC}"
     echo -e "  ${GREEN}7)${NC} Clean filenames"
@@ -140,7 +146,13 @@ show_menu() {
 show_help() {
     echo -e "${BLUE}── TYPICAL WORKFLOWS ──────────────────────────────────────${NC}"
     echo -e "  New songs from YouTube:"
-    echo -e "    ${GREEN}1${NC} → download  →  ${GREEN}6${NC} → full pipeline  →  check ${GREEN}f · g · p${NC}  →  ${GREEN}s${NC} → move to folder"
+    echo -e "    ${GREEN}1${NC} → download  →  ${GREEN}t${NC} → retry failures (if any)  →  ${GREEN}6${NC} → pipeline  →  ${GREEN}s${NC} → move to folder"
+    echo ""
+    echo -e "  Re-process existing library (pre-claude or other folders):"
+    echo -e "    ${GREEN}w${NC} → pick folder(s)  →  runs pipeline in-place (no re-download)"
+    echo ""
+    echo -e "  Something blocked in the archive / want a clean slate:"
+    echo -e "    ${GREEN}v${NC} → archive pre-claude entries and start fresh"
     echo ""
     echo -e "  Already have MP3s (need lyrics / art / metadata):"
     echo -e "    ${GREEN}6${NC} → full pipeline  →  check ${GREEN}f · g · p${NC}"
@@ -155,8 +167,15 @@ show_help() {
     echo ""
     echo -e "${BLUE}── OPTION DETAILS ─────────────────────────────────────────${NC}"
     echo -e "  ${GREEN}1${NC}  Download a playlist. Dry-run shows what would download without touching files."
+    echo -e "      A failure log is saved automatically if any songs couldn't be fetched."
+    echo -e "  ${GREEN}t${NC}  Retry failed downloads. Shows songs yt-dlp couldn't fetch, with their URLs."
+    echo -e "      Retry all or pick specific ones. Updates the manifest on success."
     echo -e "  ${GREEN}s${NC}  Move songs from All Songs into their playlist folder. Shows pending playlists"
     echo -e "      tracked since the last download. Run after option 6."
+    echo -e "  ${GREEN}w${NC}  Batch process existing folders. Run the full pipeline on any folder in"
+    echo -e "      'all downloaded music/' without re-downloading. Good for pre-claude songs."
+    echo -e "  ${GREEN}v${NC}  Manage download archive. View stats, archive pre-claude entries and start"
+    echo -e "      fresh (so old songs can be re-fetched if needed), or clear entirely."
     echo -e "  ${GREEN}2${NC}  Full metadata audit — writes timestamped log to logs/."
     echo -e "  ${GREEN}3${NC}  Remove duplicate MP3s. Logs deleted files."
     echo -e "  ${GREEN}4${NC}  Build an M3U playlist with full file paths."
@@ -263,6 +282,9 @@ while true; do
             $PYTHON_ENV "$SCRIPTS_DIR/art/fetch_album_art.py" "$TARGET_FOLDER" $REDO_FLAG
             ;;
         s|S) $PYTHON_ENV "$SCRIPTS_DIR/library/move_to_playlist.py" ;;
+        t|T) $PYTHON_ENV "$SCRIPTS_DIR/library/retry_failed.py" ;;
+        v|V) $PYTHON_ENV "$SCRIPTS_DIR/library/manage_archive.py" ;;
+        w|W) $PYTHON_ENV "$SCRIPTS_DIR/library/batch_process.py" ;;
         f|F)
             echo ""
             $PYTHON_ENV - <<EOF
