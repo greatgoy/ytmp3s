@@ -470,7 +470,7 @@ def fetch_lyrics_from_azlyrics(artist, title):
 
         soup = BeautifulSoup(html, "html.parser")
 
-        # Strategy 1: Comment-based (legacy — AZLyrics may have removed this)
+        # Strategy 1: Comment-based (legacy)
         for comment in soup.find_all(string=lambda t: isinstance(t, Comment)):
             if "Usage of azlyrics.com" in str(comment):
                 div = comment.parent
@@ -479,20 +479,18 @@ def fetch_lyrics_from_azlyrics(artist, title):
                     if lyrics:
                         return lyrics
 
-        # Strategy 2: Find the div with the most direct <br> children — that's the lyrics block
+        # Strategy 2: Unlabeled div with the most direct <br> children
+        # Relaxed: no longer skipping divs that contain a classed child div,
+        # since AZLyrics sometimes wraps a <div class="noprint"> inside the lyrics block
         best_div, best_br_count = None, 0
         for div in soup.find_all("div"):
-            # Skip divs with classes/ids (nav, footer, sharing buttons, etc.)
             if div.get("class") or div.get("id"):
-                continue
-            # Skip divs that contain other class-bearing divs (containers)
-            if div.find("div", class_=True):
                 continue
             br_count = len(div.find_all("br", recursive=False))
             if br_count > best_br_count:
                 best_br_count = br_count
                 best_div = div
-        if best_div and best_br_count >= 4:
+        if best_div and best_br_count >= 3:
             lyrics = best_div.get_text(separator="\n").strip()
             if len(lyrics) > 80:
                 return lyrics
@@ -503,6 +501,20 @@ def fetch_lyrics_from_azlyrics(artist, title):
             next_div = ringtone.find_next_sibling("div")
             if next_div:
                 text = next_div.get_text(separator="\n").strip()
+                if len(text) > 100:
+                    return text
+
+        # Strategy 4: Largest unlabeled text block in the main column
+        # Catches pages where the lyrics div is nested deeper than strategy 2 finds
+        main_col = soup.find("div", class_=re.compile(r"col-xs-12|main-page|lyric"))
+        if main_col:
+            candidates = [
+                d for d in main_col.find_all("div")
+                if not d.get("class") and not d.get("id")
+            ]
+            if candidates:
+                biggest = max(candidates, key=lambda d: len(d.get_text()))
+                text = biggest.get_text(separator="\n").strip()
                 if len(text) > 100:
                     return text
 
