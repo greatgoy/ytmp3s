@@ -21,8 +21,31 @@ KEEP_PATTERNS = [
     r"\(\d{4} Remaster\)",
     r"\(Piano Version\)",
     r"\(Live at.*?\)",
-    r"\(Original Mix\)"
+    r"\(Original Mix\)",
+    r"\([^)]*\bremix\b[^)]*\)",
+    r"\([^)]*\bedit\b[^)]*\)",
+    r"\([^)]*\bbootleg\b[^)]*\)",
 ]
+
+def detect_remix_artist(title, artist):
+    """
+    Detect titles formatted as "REAL_ARTIST - REAL_TITLE (current_artist remix/edit/...)"
+    where yt-dlp tagged the remixer as the artist instead of the original performer.
+    Returns (real_artist, new_title) or (None, None).
+    """
+    remix_match = re.search(
+        r'\(\s*' + re.escape(artist.strip()) + r'\s+(?:remix|edit|bootleg|flip|rework|re-?edit|version|mix)\)',
+        title, re.IGNORECASE
+    )
+    if not remix_match:
+        return None, None
+    before = title[:remix_match.start()].strip()
+    if ' - ' not in before:
+        return None, None
+    real_artist, real_title_base = before.split(' - ', 1)
+    new_title = f"{real_title_base.strip()} {remix_match.group()}"
+    return real_artist.strip(), new_title.strip()
+
 
 def clean_title(title):
     keep_fragments = []
@@ -86,6 +109,24 @@ def main():
             prefix_match = re.match(r'^(\d+)\s+(.+)$', os.path.splitext(file)[0])
             if prefix_match:
                 embed_track_number(full_path, prefix_match.group(1), log)
+
+            # Fix remixer-as-artist before cleaning:
+            # yt-dlp sometimes tags "prodwhite" as artist when title is "MK - DIOR (prodwhite remix)"
+            try:
+                audio_tmp = EasyID3(full_path)
+                t = audio_tmp.get("title", [None])[0]
+                a = audio_tmp.get("artist", [None])[0]
+                if t and a:
+                    real_artist, new_t = detect_remix_artist(t, a)
+                    if real_artist:
+                        audio_tmp["artist"] = [real_artist]
+                        audio_tmp["title"]  = [new_t]
+                        audio_tmp.save()
+                        msg = f"🎛  Remix fix: artist '{a}' → '{real_artist}' | title → '{new_t}'"
+                        log.write(msg + "\n")
+                        print(msg)
+            except Exception:
+                pass
 
             new_name = get_clean_filename(full_path)
             if not new_name or new_name == file:
