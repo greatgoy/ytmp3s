@@ -86,10 +86,14 @@ def main():
     log = logs[int(choice) - 1]
     failed = log["failed"]
 
+
     print(f"\nFailed songs ({len(failed)}):")
     for i, entry in enumerate(failed, 1):
-        print(f"  {i}) {entry['title']}")
+        tag = " 🚫 unavailable" if entry.get('reason') == 'unavailable' else ""
+        title = entry['title'] or "(no title)"
+        print(f"  {i}) {title}{tag}")
         print(f"     {entry['url']}")
+
 
     print()
     print("  a) Retry all")
@@ -102,6 +106,9 @@ def main():
 
     if action == "a":
         targets = failed
+        n_unavail = sum(1 for e in failed if e.get('reason') == 'unavailable')
+        if n_unavail:
+            print(f"\n⚠️  {n_unavail} of these are marked unavailable — they'll likely fail again, but retrying is harmless.")
     elif action == "n":
         nums_raw = input("Enter song number(s): ").strip()
         targets = []

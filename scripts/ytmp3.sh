@@ -136,17 +136,26 @@ if os.path.exists(archive_file):
             if len(parts) == 2:
                 archive_ids.add(parts[1])
 
+
+import re
+
+def classify(title):
+    t = (title or '').strip()
+    if not t or t.lower() == 'na' or re.search(r'private video|deleted video', t, re.I):
+        return 'unavailable'   # YouTube itself won't serve this one — private/deleted/region-locked
+    return 'download_error'    # had a real title but still didn't land in the archive
+
 failed = []
 total  = 0
 with open(playlist_tsv) as f:
     for line in f:
-        line = line.strip()
+        line = line.rstrip('\n')
         if '\t' not in line:
             continue
         vid_id, title = line.split('\t', 1)
         total += 1
         if vid_id not in archive_ids:
-            failed.append({'id': vid_id, 'title': title,
+            failed.append({'id': vid_id, 'title': title, 'reason': classify(title),
                            'url': f'https://www.youtube.com/watch?v={vid_id}'})
 
 if failed:
@@ -154,12 +163,25 @@ if failed:
         json.dump({'playlist_name': playlist_title,
                    'playlist_url':  playlist_url,
                    'failed':        failed}, f, indent=2)
-    print(f"\n⚠️  {len(failed)}/{total} song(s) failed to download:")
-    for e in failed:
-        print(f"   • {e['title']}")
+
+    unavailable = [e for e in failed if e['reason'] == 'unavailable']
+    errors      = [e for e in failed if e['reason'] == 'download_error']
+
+    if unavailable:
+        print(f"\n🚫 {len(unavailable)}/{total} video(s) hidden/unavailable on YouTube (private, deleted, or region-locked):")
+        for e in unavailable:
+            print(f"   • https://www.youtube.com/watch?v={e['id']}  (no title — YouTube won't serve this one)")
+
+    if errors:
+        print(f"\n⚠️  {len(errors)}/{total} song(s) failed to download:")
+        for e in errors:
+            print(f"   • {e['title']}")
+
     print(f"\n   Run option t to view details and retry.")
 else:
     print(f"✅ All {total} song(s) downloaded successfully")
+
+
 PYEOF
 
 rm -f "$BEFORE_FILE" "$PLAYLIST_TSV"
